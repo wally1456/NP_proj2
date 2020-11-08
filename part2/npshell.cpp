@@ -6,7 +6,8 @@
 #include<vector>
 #include<wait.h>
 #include<fcntl.h>
-#include<memory.h>
+#include<arpa/inet.h>
+
 
 #include <errno.h>
 #include <sys/types.h>
@@ -23,16 +24,17 @@ struct user
 {
     int fd;
     string env;
+    int ID;
     string name;
+    char ip[INET6_ADDRSTRLEN];
+    int port;
     int cmd_count;    
     vector<int> number_pipe[1000];
 
 };
 
-//extern int	errno;
-
 int		passiveTCP(const string service, int qlen);
-int		client_cmd(user &now_user);
+int		client_cmd(vector<user> &user_table, int num);
 int     passivesock( string service, string protocol, int	qlen );
 
 void split_input(string str,vector<string> &tuple){
@@ -60,8 +62,8 @@ void close_pipe(int pipeline[][2],int pipe_count){
     close(pipeline[pipe_count][0]);
     close(pipeline[pipe_count][1]);
 }
-void connect_msg(){
-    cerr << "***************************************\n** Welcome to the information server **\n**************************************\n%";
+void welcome_msg(){
+    cerr << "***************************************\n** Welcome to the information server **\n**************************************\n";
 }
 void childHandler(int signo){ 
     int status; 
@@ -69,7 +71,7 @@ void childHandler(int signo){
             //do nothing 
         } 
     }
-void excute_cmd(vector<string> s_input,user &now_user){
+void excute_cmd(vector<string> s_input,vector<user> &user_table, int user_num){
     signal(SIGCHLD, childHandler);
     int i = 0;
     vector<string> tmp_input;
@@ -80,9 +82,9 @@ void excute_cmd(vector<string> s_input,user &now_user){
     bool have_number_pipe = 0;
     bool ordinary_pipe = 0;
     int number;
-    int cmd_count = now_user.cmd_count;
+    int cmd_count = user_table[user_num].cmd_count;
 
-    if (!now_user.number_pipe[cmd_count%1000].empty()){
+    if (!user_table[user_num].number_pipe[cmd_count%1000].empty()){
         have_number_pipe = 1;
     }
     while(i<s_input.size()){
@@ -111,18 +113,18 @@ void excute_cmd(vector<string> s_input,user &now_user){
                 if (pipe_count != 0)
                     dup2(pipeline[pipe_count-1][0],STDIN_FILENO); 
                 else if (have_number_pipe){
-                    dup2(now_user.number_pipe[cmd_count%1000][0],STDIN_FILENO);
-                    close(now_user.number_pipe[cmd_count%1000][0]);
-                    close(now_user.number_pipe[cmd_count%1000][1]);
+                    dup2(user_table[user_num].number_pipe[cmd_count%1000][0],STDIN_FILENO);
+                    close(user_table[user_num].number_pipe[cmd_count%1000][0]);
+                    close(user_table[user_num].number_pipe[cmd_count%1000][1]);
                 }
                 if (i != s_input.size()-1 )
                     dup2(pipeline[pipe_count][1],STDOUT_FILENO);
                 else if(is_number_pipe){
                     int pipe_num;
-                    if (now_user.number_pipe[(cmd_count+number)%1000].empty())
+                    if (user_table[user_num].number_pipe[(cmd_count+number)%1000].empty())
                         pipe_num = pipeline[pipe_count][1];
                     else
-                        pipe_num = now_user.number_pipe[(cmd_count+number)%1000][1];                          
+                        pipe_num = user_table[user_num].number_pipe[(cmd_count+number)%1000][1];                          
                     dup2(pipe_num,STDOUT_FILENO);
                     if (ordinary_pipe)
                         dup2(pipe_num,STDERR_FILENO);    
@@ -131,6 +133,8 @@ void excute_cmd(vector<string> s_input,user &now_user){
                     write_to_file((char*)(s_input[i+1].c_str()));    
                 }                                      
                 close_pipe(pipeline,pipe_count);
+                for (int i=0;i<user_table.size();i++)
+                    close(user_table[i].fd);
 
                 char* arg[tmp_input.size()+1];
                 for(int j=0;j<tmp_input.size();j++){
@@ -155,9 +159,9 @@ void excute_cmd(vector<string> s_input,user &now_user){
                         close(pipeline[pipe_count][1]);
                     }
                     else{                    
-                        if (now_user.number_pipe[(cmd_count+number)%1000].empty()){
-                            now_user.number_pipe[(cmd_count+number)%1000].push_back(pipeline[pipe_count][0]);
-                            now_user.number_pipe[(cmd_count+number)%1000].push_back(pipeline[pipe_count][1]);  
+                        if (user_table[user_num].number_pipe[(cmd_count+number)%1000].empty()){
+                            user_table[user_num].number_pipe[(cmd_count+number)%1000].push_back(pipeline[pipe_count][0]);
+                            user_table[user_num].number_pipe[(cmd_count+number)%1000].push_back(pipeline[pipe_count][1]);  
                         }
                         else{
                             close(pipeline[pipe_count][0]);
@@ -166,10 +170,10 @@ void excute_cmd(vector<string> s_input,user &now_user){
                     }
                 }
                 if(have_number_pipe){
-                    while(!now_user.number_pipe[cmd_count%1000].empty()){
-                        int fd = now_user.number_pipe[cmd_count%1000].back();
+                    while(!user_table[user_num].number_pipe[cmd_count%1000].empty()){
+                        int fd = user_table[user_num].number_pipe[cmd_count%1000].back();
                         close(fd);
-                        now_user.number_pipe[cmd_count%1000].pop_back();
+                        user_table[user_num].number_pipe[cmd_count%1000].pop_back();
                     }
                 }
             }
@@ -187,7 +191,43 @@ void excute_cmd(vector<string> s_input,user &now_user){
         waitpid(pidTable[i],&status,0);  
     }
 }
-
+void set_new_user(user &new_user,int ssock,struct sockaddr_in fsin,bool ID_table[30]){
+    new_user.fd=ssock;
+    new_user.env="bin:.";
+    for(int i=0;i<30;i++)
+        if(!ID_table){
+            new_user.ID=i;
+            break;
+        }
+    struct sockaddr_in *s = (struct sockaddr_in *)&fsin;
+    int port = ntohs(s->sin_port);
+    inet_ntop(AF_INET, &s->sin_addr, new_user.ip, sizeof new_user.ip);
+    new_user.port = port;
+    new_user.name="no name";
+    new_user.cmd_count=0;
+}
+void Broadcast(string str,vector<user> &user_table){
+    for(int i=0;i<user_table.size();i++){
+        dup2(user_table[i].fd,STDERR_FILENO);
+        cerr << str << endl;
+    }
+}
+void new_connect_action(user new_user,vector<user> &user_table){
+    dup2(new_user.fd,STDERR_FILENO);
+    welcome_msg();
+    string Broadcast_msg = "*** User ’(no name)’ entered from "+ string(new_user.ip) +":" + to_string(new_user.port) +". *** ";
+    Broadcast(Broadcast_msg,user_table);
+    dup2(new_user.fd,STDERR_FILENO);
+    cerr << "% ";
+}
+/*
+void sig_handler(int signum)  
+{  
+    cerr << "in handler\n";  
+    sleep(1);  
+    cerr << "handler return\n";  
+}
+*/
 int  main(int argc, char *argv[])
 {	
     string service = argv[1];	/* service name or port number	*/
@@ -197,7 +237,15 @@ int  main(int argc, char *argv[])
 	fd_set	afds;		/* active file descriptor set	*/
 	socklen_t	alen;		/* from-address length	*/
 	int	fd, nfds;
-    
+    bool ID_table[30]={0};
+    /*
+    struct sigaction action;
+    action.sa_handler = sig_handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = 0;  
+    action.sa_flags |= SA_RESTART; 
+    sigaction(SIGALRM, &action, NULL);
+*/
     vector<user> user_table;
 
     msock = passiveTCP(service, QLEN);
@@ -207,33 +255,34 @@ int  main(int argc, char *argv[])
 	FD_SET(msock, &afds);
 	while (1) {
 		memcpy(&rfds, &afds, sizeof(rfds));
-
-		if (select(nfds, &rfds, (fd_set *)0, (fd_set *)0,(struct timeval *)0) < 0)
-			cout <<"select: " << strerror(errno) << "\n" ;
-
+		if (select(nfds, &rfds, (fd_set *)0, (fd_set *)0,(struct timeval *)0) < 0){
+            if(errno == EINTR)
+                continue;
+			cout <<"select: " << strerror(errno) << "\n" ; 
+        }
         if (FD_ISSET(msock, &rfds)) {
             int	ssock;
             alen = sizeof(fsin);
             ssock = accept(msock, (struct sockaddr *)&fsin,&alen);
             if (ssock < 0)
                 cout <<"accept: " << strerror(errno) << "\n" ;
+
             user new_user ={};
-            new_user.fd=ssock;
-            new_user.env="bin:.";
-            new_user.name="no name";
-            new_user.cmd_count=0;
+            set_new_user(new_user,ssock,fsin,ID_table);
+            ID_table[new_user.fd]=1;
             user_table.push_back(new_user);
+
             FD_SET(ssock, &afds);
-            dup2(new_user.fd,STDERR_FILENO);
-            connect_msg();
+            new_connect_action(new_user,user_table);
+            
         }
-        
 		for (int i = 0; i<user_table.size(); i++){
             fd = user_table[i].fd;
 			if (fd != msock && FD_ISSET(fd, &rfds))
-				if (client_cmd(user_table[i]) == 0) {
+				if (client_cmd(user_table,i) == 0) {
 					(void) close(fd);
 					FD_CLR(fd, &afds);
+                    ID_table[fd]=0;
                     user_table.erase(user_table.begin()+ i);
 				}
         }
@@ -242,12 +291,12 @@ int  main(int argc, char *argv[])
 
 
 
-int client_cmd(user &now_user)
+int client_cmd(vector<user> &user_table, int user_num)
 {
 	char buf[BUFSIZE]={'\0'};
 
 	int	cc;
-    int fd = now_user.fd;
+    int fd = user_table[user_num].fd;
 	cc = read(fd, buf, sizeof buf);
     if (cc ==0)
         return cc;
@@ -277,20 +326,20 @@ int client_cmd(user &now_user)
     /*if (s_input[0]=="exit" || s_input[0]=="EOF")
         break;*/
     else
-        now_user.cmd_count += 1;
+        user_table[user_num].cmd_count += 1;
 
     setenv("PATH","bin:.",1);
     if (s_input[0]=="printenv"){
-        cerr << getenv(now_user.env.c_str()) << endl;
+        cerr << getenv(user_table[user_num].env.c_str()) << endl;
         return cc;
     }
     else if (s_input[0]=="setenv"){
         setenv(s_input[1].c_str(),s_input[2].c_str(),1);
-        now_user.env = s_input[2].c_str();
+        user_table[user_num].env = s_input[2].c_str();
         return cc;
     }
-    excute_cmd(s_input,now_user);
-    cerr << "%";
+    excute_cmd(s_input,user_table,user_num);
+    cerr << "% ";
     return cc;
 }
 
