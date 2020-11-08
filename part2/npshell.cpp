@@ -30,7 +30,6 @@ struct user
     int port;
     int cmd_count;    
     vector<int> number_pipe[1000];
-
 };
 
 int		passiveTCP(const string service, int qlen);
@@ -195,7 +194,7 @@ void set_new_user(user &new_user,int ssock,struct sockaddr_in fsin,bool ID_table
     new_user.fd=ssock;
     new_user.env="bin:.";
     for(int i=0;i<30;i++)
-        if(!ID_table){
+        if(!ID_table[i]){
             new_user.ID=i;
             break;
         }
@@ -206,10 +205,10 @@ void set_new_user(user &new_user,int ssock,struct sockaddr_in fsin,bool ID_table
     new_user.name="no name";
     new_user.cmd_count=0;
 }
-void Broadcast(string str,vector<user> &user_table){
+void Broadcast(string msg,vector<user> &user_table){
     for(int i=0;i<user_table.size();i++){
         dup2(user_table[i].fd,STDERR_FILENO);
-        cerr << str << endl;
+        cerr << msg << endl;
     }
 }
 void new_connect_action(user new_user,vector<user> &user_table){
@@ -220,6 +219,50 @@ void new_connect_action(user new_user,vector<user> &user_table){
     dup2(new_user.fd,STDERR_FILENO);
     cerr << "% ";
 }
+void who(user now_user,vector<user> &user_table){
+    dup2(now_user.fd,STDERR_FILENO);
+    cerr << "<ID>\t<nickname>\t<IP:port>\t<indicate me>\n";
+    for(int i=0;i<user_table.size();i++){
+        user u = user_table[i];
+        cerr << u.ID << "\t" <<u.name << "\t" << string(u.ip) << ":" << to_string(u.port) << "\t";
+        if (u.ID == now_user.ID)
+            cerr << "<- me";
+        cerr << endl;
+    }
+}
+void tell(string source_name, int traget_ID, string msg,vector<user> &user_table){
+    int i;
+    for(i=0;i<user_table.size();i++)
+        if(user_table[i].ID==traget_ID)
+            break;
+    if(i == user_table.size()){
+        cerr <<"*** Error: user "<< traget_ID <<" does not exist yet. ***\n";
+        return;
+    }
+    dup2(user_table[i].fd,STDERR_FILENO);
+    cerr << "*** " << source_name << " told you ***: " << msg << endl;
+}
+void yell(string source_name, string msg,vector<user> &user_table){
+    string Broadcast_msg ="*** "+ source_name + " yelled ***: " +msg;
+    Broadcast(Broadcast_msg,user_table);
+}
+void name(int user_ID,string new_name,vector<user> &user_table){
+    for(int i=0;i<user_table.size();i++)
+        if(user_table[i].name==new_name){
+            cerr << "*** User ’"<< new_name <<"’ already exists. ***\n";
+            return;
+        }
+    int i;
+    for(i=0;i<user_table.size();i++)
+        if(user_table[i].ID==user_ID){
+            user_table[i].name = new_name;
+            break;
+        }
+    string Broadcast_msg ="*** User from "+ string(user_table[i].ip) +":" + to_string(user_table[i].port) +" is named ’"+ new_name +"’. ***";
+    Broadcast(Broadcast_msg,user_table);
+}
+
+
 /*
 void sig_handler(int signum)  
 {  
@@ -269,12 +312,10 @@ int  main(int argc, char *argv[])
 
             user new_user ={};
             set_new_user(new_user,ssock,fsin,ID_table);
-            ID_table[new_user.fd]=1;
-            user_table.push_back(new_user);
-
+            ID_table[new_user.ID]=1;
+            user_table.insert(user_table.begin()+new_user.ID,new_user);
             FD_SET(ssock, &afds);
             new_connect_action(new_user,user_table);
-            
         }
 		for (int i = 0; i<user_table.size(); i++){
             fd = user_table[i].fd;
@@ -282,14 +323,12 @@ int  main(int argc, char *argv[])
 				if (client_cmd(user_table,i) == 0) {
 					(void) close(fd);
 					FD_CLR(fd, &afds);
-                    ID_table[fd]=0;
+                    ID_table[user_table[i].ID]=0;
                     user_table.erase(user_table.begin()+ i);
 				}
         }
 	}
 }
-
-
 
 int client_cmd(vector<user> &user_table, int user_num)
 {
@@ -321,12 +360,45 @@ int client_cmd(vector<user> &user_table, int user_num)
     }
     split_input(input,s_input);
 
-    if (s_input.size()<1)
-        return cc;        
-    /*if (s_input[0]=="exit" || s_input[0]=="EOF")
-        break;*/
+    if (s_input.size()<1){
+        cerr << "% ";
+        return cc;
+    }
+        
+
+    bool break_flag=1;        
+    if (s_input[0]=="who")
+        who(user_table[user_num],user_table);
+    else if (s_input[0]=="name"){
+        string str = "";
+        for(int i=1;i<s_input.size();i++)
+            str += s_input[i]+" ";
+        str.pop_back();
+        name(user_table[user_num].ID,str,user_table);
+    }
+    else if (s_input[0]=="tell"){
+        string str = "";
+        for(int i=2;i<s_input.size();i++)
+            str += s_input[i]+" ";
+        str.pop_back();
+        tell(user_table[user_num].name,stoi(s_input[1]),str,user_table);
+    }
+    else if (s_input[0]=="yell"){
+        string str = "";
+        for(int i=1;i<s_input.size();i++)
+            str += s_input[i]+" ";
+        str.pop_back();
+        yell(user_table[user_num].name,str,user_table);
+    }
     else
-        user_table[user_num].cmd_count += 1;
+        break_flag=0;
+
+    user_table[user_num].cmd_count += 1;
+
+    if(break_flag){
+        cerr << "% ";
+        return cc;
+    }
 
     setenv("PATH","bin:.",1);
     if (s_input[0]=="printenv"){
