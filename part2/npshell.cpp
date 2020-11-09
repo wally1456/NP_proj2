@@ -7,7 +7,6 @@
 #include<wait.h>
 #include<fcntl.h>
 #include<arpa/inet.h>
-
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -100,10 +99,19 @@ void Broadcast(string msg,vector<user> &user_table){
 void new_connect_action(user new_user,vector<user> &user_table){
     dup2(new_user.fd,STDERR_FILENO);
     welcome_msg();
-    string Broadcast_msg = "*** User ’(no name)’ entered from "+ string(new_user.ip) +":" + to_string(new_user.port) +". *** ";
+    string Broadcast_msg = "*** User '(no name)' entered from "+ string(new_user.ip) +":" + to_string(new_user.port) +". *** ";
     Broadcast(Broadcast_msg,user_table);
     dup2(new_user.fd,STDERR_FILENO);
     cerr << "% ";
+}
+void clear_fd(){
+    int fd_RD = open("/dev/null", O_RDONLY);
+    int fd_WR = open("/dev/null", O_WRONLY);    
+    dup2(fd_RD, STDIN_FILENO);
+    dup2(fd_WR, STDOUT_FILENO);   
+    dup2(fd_WR, STDERR_FILENO); 
+    close(fd_RD);
+    close(fd_WR);
 }
 void who(user now_user,vector<user> &user_table){
     dup2(now_user.fd,STDERR_FILENO);
@@ -132,13 +140,13 @@ void yell(string source_name, string msg,vector<user> &user_table){
 void name(int user_ID,string new_name,vector<user> &user_table){
     for(int i=0;i<user_table.size();i++)
         if(user_table[i].name==new_name){
-            cerr << "*** User ’"<< new_name <<"’ already exists. ***\n";
+            cerr << "*** User '"<< new_name <<"' already exists. ***\n";
             return;
         }
     int i = ID_find_index(user_ID,user_table);
     user_table[i].name = new_name;
 
-    string Broadcast_msg ="*** User from "+ string(user_table[i].ip) +":" + to_string(user_table[i].port) +" is named ’"+ new_name +"’. ***";
+    string Broadcast_msg ="*** User from "+ string(user_table[i].ip) +":" + to_string(user_table[i].port) +" is named '"+ new_name +"'. ***";
     Broadcast(Broadcast_msg,user_table);
 }
 void excute_cmd(vector<string> s_input,vector<user> &user_table, int user_num){
@@ -192,7 +200,7 @@ void excute_cmd(vector<string> s_input,vector<user> &user_table, int user_num){
                     int source_num = ID_find_index(stoi(tmp_input[j]),user_table);
                     if(!user_table[user_num].user_pipe[stoi(tmp_input[j])].empty()){
                         user_pipe_in = stoi(tmp_input[j]);
-                        in_msg +="*** "+user_table[user_num].name+" (#"+ to_string(user_table[user_num].ID)+") just received from "+user_table[source_num].name+" (#"+ to_string(user_table[source_num].ID)+") by '"+cmd+"' ***\n";
+                        in_msg +="*** "+user_table[user_num].name+" (#"+ to_string(user_table[user_num].ID)+") just received from "+user_table[source_num].name+" (#"+ to_string(user_table[source_num].ID)+") by '"+cmd+"' ***";
                     }                       
                     else
                         in_error += "*** Error: the pipe " + tmp_input[j] + "->" + to_string(user_table[user_num].ID) +" does not exist yet. ***\n";
@@ -204,9 +212,9 @@ void excute_cmd(vector<string> s_input,vector<user> &user_table, int user_num){
                     if(ID_find_index(stoi(tmp_input[j]),user_table)==-1){
                         cerr << "*** Error: user #"+ tmp_input[j] +" does not exist yet. ***";
                     }
-                    else if(user_table[user_num].user_pipe[stoi(tmp_input[j])].empty()){
+                    else if(user_table[target_num].user_pipe[user_table[user_num].ID].empty()){
                         user_pipe_out = stoi(tmp_input[j]);
-                        out_msg +="*** "+user_table[user_num].name+" (#"+ to_string(user_table[user_num].ID)+") just piped "+cmd+" to "+user_table[target_num].name+" (#"+ to_string(user_table[target_num].ID)+") ***\n";
+                        out_msg +="*** "+user_table[user_num].name+" (#"+ to_string(user_table[user_num].ID)+") just piped '"+cmd+"' to "+user_table[target_num].name+" (#"+ to_string(user_table[target_num].ID)+") ***";
                     }
                     else
                         out_error += "*** Error: the pipe " + to_string(user_table[user_num].ID) + "->" + tmp_input[j] +" already exist. ***\n";                    
@@ -215,12 +223,23 @@ void excute_cmd(vector<string> s_input,vector<user> &user_table, int user_num){
             }
             if(in_msg!="")
                 Broadcast(in_msg,user_table);
-            else if(in_error!="")
-                cerr << in_error;
+            else if(in_error!=""){
+                cerr << in_error;                
+                int fd_RD = open("/dev/null", O_RDONLY);   
+                dup2(fd_RD, STDIN_FILENO); 
+                close(fd_RD);
+            }
             if(out_msg!="")
                 Broadcast(out_msg,user_table);
-            else if(out_error!="")
-                cerr << out_error;
+            else if(out_error!=""){
+                cerr << out_error;                
+                int fd_WR = open("/dev/null", O_WRONLY);    
+                dup2(fd_WR, STDOUT_FILENO);   
+                dup2(fd_WR, STDERR_FILENO); 
+                close(fd_WR);
+            }
+            
+
             pid_t pid;
             while((pid = fork())<0){
                 usleep(1000);
@@ -330,6 +349,28 @@ void excute_cmd(vector<string> s_input,vector<user> &user_table, int user_num){
         waitpid(pidTable[i],&status,0);  
     }
 }
+void user_logout(vector<user> &user_table, int user_num, bool ID_table[QLEN+1], fd_set	&afds){
+    user now_user = user_table[user_num];
+    string broadcast_msg ="*** User "+ now_user.name +" left. ***";
+    close(now_user.fd);
+	FD_CLR(now_user.fd, &afds);
+    ID_table[now_user.ID]=0;
+    for(int i=1;i<QLEN+1;i++)
+        while(!now_user.user_pipe[i].empty()){
+            int fd = now_user.user_pipe[i].back();
+            close(fd);
+            now_user.user_pipe[i].pop_back();
+        }
+    for(int i=0;i<user_table.size();i++)
+        while(!user_table[i].user_pipe[now_user.ID].empty()){
+            int fd = user_table[i].user_pipe[now_user.ID].back();
+            close(fd);
+            user_table[i].user_pipe[now_user.ID].pop_back();
+        }
+    user_table.erase(user_table.begin()+ user_num);
+    Broadcast(broadcast_msg,user_table);
+    clear_fd();
+}
 
 int  main(int argc, char *argv[])
 {	
@@ -365,7 +406,6 @@ int  main(int argc, char *argv[])
             user new_user ={};
             set_new_user(new_user,ssock,fsin,ID_table);
             ID_table[new_user.ID]=1;
-            cerr << "ID";
             user_table.insert(user_table.begin()+new_user.ID-1,new_user);
             FD_SET(ssock, &afds);
             new_connect_action(new_user,user_table);
@@ -373,12 +413,8 @@ int  main(int argc, char *argv[])
 		for (int i = 0; i<user_table.size(); i++){
             fd = user_table[i].fd;
 			if (fd != msock && FD_ISSET(fd, &rfds))
-				if (client_cmd(user_table,i) == 0) {
-					(void) close(fd);
-					FD_CLR(fd, &afds);
-                    ID_table[user_table[i].ID]=0;
-                    user_table.erase(user_table.begin()+ i);
-				}
+				if (client_cmd(user_table,i) == 0) 
+                    user_logout(user_table,i,ID_table,afds);
         }
 	}
 }
@@ -386,16 +422,12 @@ int  main(int argc, char *argv[])
 int client_cmd(vector<user> &user_table, int user_num)
 {
 	char buf[BUFSIZE]={'\0'};
-
 	int	cc;
     int fd = user_table[user_num].fd;
 	cc = read(fd, buf, sizeof buf);
     if (cc ==0)
         return cc;
 
-    dup2(fd,STDIN_FILENO); 
-    dup2(fd,STDOUT_FILENO);
-    dup2(fd,STDERR_FILENO);
     string input(buf);
     vector<string> s_input;
 
@@ -407,11 +439,17 @@ int client_cmd(vector<user> &user_table, int user_num)
     }
     split_input(input,s_input);
 
+    dup2(fd,STDIN_FILENO); 
+    dup2(fd,STDOUT_FILENO);
+    dup2(fd,STDERR_FILENO);
+
     if (s_input.size()<1){
         cerr << "% ";
         return cc;
     }
-        
+    if(s_input[0]=="exit")
+        return 0;
+
     bool break_flag=1;        
     if (s_input[0]=="who")
         who(user_table[user_num],user_table);
@@ -457,6 +495,7 @@ int client_cmd(vector<user> &user_table, int user_num)
         return cc;
     }
     excute_cmd(s_input,user_table,user_num);
+    dup2(fd,STDERR_FILENO);
     cerr << "% ";
     return cc;
 }
@@ -465,7 +504,6 @@ int passiveTCP(const string service,int qlen )
 {
 	return passivesock(service, "tcp", qlen);
 }
-
 int passivesock(string service, string protocol, int	qlen )
 {
 	struct servent    *pse;	/* pointer to service information entry	*/
